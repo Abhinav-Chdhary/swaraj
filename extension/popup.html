@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="hi">
+<head>
+  <meta charset="UTF-8">
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="container">
+    <h1>स्वराज</h1>
+    <p class="subtitle">Hindi Voice-to-Text</p>
+
+    <button id="recordBtn" class="record-btn">
+      <span class="mic-icon">🎙</span>
+      <span id="btnText">Start Recording</span>
+    </button>
+
+    <div id="timer" class="timer hidden">00:00</div>
+    <div id="status" class="status"></div>
+
+    <div id="resultArea" class="result-area hidden">
+      <label>Transcription:</label>
+      <div id="transcription" class="transcription"></div>
+      <button id="copyBtn" class="copy-btn">Copy Text</button>
+    </div>
+
+    <div id="error" class="error hidden"></div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
