@@ -46,7 +46,9 @@ async def transcribe(file: UploadFile = File(...)):
         segments_iter, info = model.transcribe(
             tmp_path,
             language="hi",
+            task="transcribe",
             vad_filter=True,
+            initial_prompt="नमस्कार, यह हिंदी में बोला गया वाक्य है।",
         )
 
         segments = []
