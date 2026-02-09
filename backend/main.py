@@ -1,25 +1,34 @@
 import os
+import subprocess
 import tempfile
 from contextlib import asynccontextmanager
 
+import torch
 from fastapi import FastAPI, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from faster_whisper import WhisperModel
 
 model = None
+device = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global model
-    print("Loading faster-whisper 'base' model (int8)...")
-    model = WhisperModel("base", device="cpu", compute_type="int8")
+    global model, device
+    import nemo.collections.asr as nemo_asr
+
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    print(f"Loading IndicConformer Hindi model on {device}...")
+    model = nemo_asr.models.ASRModel.from_pretrained(
+        "ai4bharat/indicconformer_stt_hi_hybrid_ctc_rnnt_large"
+    )
+    model.freeze()
+    model = model.to(device)
     print("Model loaded successfully.")
     yield
     model = None
 
 
-app = FastAPI(title="Swaraj - Hindi Voice-to-Text", lifespan=lifespan)
+app = FastAPI(title="Swaraj — Hindi Voice-to-Text", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -42,29 +51,51 @@ async def transcribe(file: UploadFile = File(...)):
         tmp.write(content)
         tmp_path = tmp.name
 
+    wav_path = tmp_path + ".wav"
     try:
-        segments_iter, info = model.transcribe(
-            tmp_path,
-            language="hi",
-            task="transcribe",
-            vad_filter=True,
-            initial_prompt="नमस्कार, यह हिंदी में बोला गया वाक्य है।",
+        # Convert uploaded audio to 16kHz mono WAV using ffmpeg
+        subprocess.run(
+            [
+                "ffmpeg", "-y", "-i", tmp_path,
+                "-ar", "16000", "-ac", "1", "-f", "wav", wav_path,
+            ],
+            check=True,
+            capture_output=True,
         )
 
-        segments = []
-        full_text_parts = []
-        for segment in segments_iter:
-            segments.append({
-                "start": round(segment.start, 2),
-                "end": round(segment.end, 2),
-                "text": segment.text.strip(),
-            })
-            full_text_parts.append(segment.text.strip())
+        # Transcribe with CTC decoder
+        model.cur_decoder = "ctc"
+        transcriptions = model.transcribe(
+            [wav_path], batch_size=1, logprobs=False, language_id="hi"
+        )
 
-        return {
-            "text": " ".join(full_text_parts),
-            "segments": segments,
-            "duration": round(info.duration, 2),
-        }
+        # NeMo returns a list of strings (or list of Hypothesis objects)
+        if isinstance(transcriptions, tuple):
+            transcriptions = transcriptions[0]
+
+        text = transcriptions[0] if transcriptions else ""
+        if hasattr(text, "text"):
+            text = text.text
+
+        # Get audio duration via ffprobe
+        duration = 0.0
+        try:
+            probe = subprocess.run(
+                [
+                    "ffprobe", "-v", "error",
+                    "-show_entries", "format=duration",
+                    "-of", "default=noprint_wrappers=1:nokey=1",
+                    wav_path,
+                ],
+                capture_output=True, text=True,
+            )
+            duration = round(float(probe.stdout.strip()), 2)
+        except (ValueError, FileNotFoundError):
+            pass
+
+        return {"text": text, "duration": duration}
     finally:
-        os.unlink(tmp_path)
+        if os.path.exists(tmp_path):
+            os.unlink(tmp_path)
+        if os.path.exists(wav_path):
+            os.unlink(wav_path)
